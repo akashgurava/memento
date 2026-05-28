@@ -2,10 +2,26 @@ use std::fs;
 use std::path::PathBuf;
 
 use memento::config::AppConfig;
-use memento::scanner::level1::run_stats_scan;
+use memento::error::Result;
+use memento::scanner::stats::run_stats_scan;
 use memento::scanner::progress::NoopReporter;
+use memento::scanner::store::{StatEntry, StatsScanStore};
 use memento::scanner::walk::{classify_extension, walk_directory};
 use memento::tokio_util::sync::CancellationToken;
+
+struct NoopStatsScanStore;
+
+impl StatsScanStore for NoopStatsScanStore {
+    fn get_known_paths_for_root(&self, _root: &str) -> Result<Vec<String>> {
+        Ok(Vec::new())
+    }
+    fn upsert_file_batch(&self, _root: &str, _entries: &[StatEntry]) -> Result<()> {
+        Ok(())
+    }
+    fn mark_missing_batch(&self, _paths: &[&str]) -> Result<()> {
+        Ok(())
+    }
+}
 
 fn test_images_dir() -> PathBuf {
     let mut path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -134,7 +150,7 @@ fn stats_scan_with_test_images() {
     config.scan.roots = vec![test_images_dir().to_string_lossy().to_string()];
 
     let cancel = CancellationToken::new();
-    let stats = run_stats_scan(&config, 0, &NoopReporter, &cancel).unwrap();
+    let stats = run_stats_scan(&config, &NoopStatsScanStore, 0, &NoopReporter, &cancel).unwrap();
 
     // 26 image files + 1 txt = 27 total
     assert!(stats.total_files >= 26);
@@ -149,7 +165,7 @@ fn stats_scan_size_invariant() {
     config.scan.roots = vec![test_images_dir().to_string_lossy().to_string()];
 
     let cancel = CancellationToken::new();
-    let stats = run_stats_scan(&config, 0, &NoopReporter, &cancel).unwrap();
+    let stats = run_stats_scan(&config, &NoopStatsScanStore, 0, &NoopReporter, &cancel).unwrap();
 
     assert_eq!(
         stats.total_files,
@@ -167,7 +183,7 @@ fn stats_scan_size_invariant() {
 fn stats_scan_empty_roots() {
     let config = AppConfig::default(); // no roots configured
     let cancel = CancellationToken::new();
-    let stats = run_stats_scan(&config, 0, &NoopReporter, &cancel).unwrap();
+    let stats = run_stats_scan(&config, &NoopStatsScanStore, 0, &NoopReporter, &cancel).unwrap();
 
     assert_eq!(stats.total_files, 0);
     assert_eq!(stats.total_size_bytes, 0);
@@ -179,7 +195,7 @@ fn stats_scan_nonexistent_root_skipped() {
     config.scan.roots = vec!["/nonexistent/path/12345".into()];
 
     let cancel = CancellationToken::new();
-    let stats = run_stats_scan(&config, 0, &NoopReporter, &cancel).unwrap();
+    let stats = run_stats_scan(&config, &NoopStatsScanStore, 0, &NoopReporter, &cancel).unwrap();
 
     assert_eq!(stats.total_files, 0);
 }
@@ -192,7 +208,7 @@ fn stats_scan_cancellation() {
     let cancel = CancellationToken::new();
     cancel.cancel(); // pre-cancel
 
-    let err = run_stats_scan(&config, 0, &NoopReporter, &cancel).unwrap_err();
+    let err = run_stats_scan(&config, &NoopStatsScanStore, 0, &NoopReporter, &cancel).unwrap_err();
     assert!(err.to_string().contains("SCAN_CANCELLED"));
 }
 
@@ -210,7 +226,7 @@ fn stats_scan_multiple_roots() {
     ];
 
     let cancel = CancellationToken::new();
-    let stats = run_stats_scan(&config, 0, &NoopReporter, &cancel).unwrap();
+    let stats = run_stats_scan(&config, &NoopStatsScanStore, 0, &NoopReporter, &cancel).unwrap();
 
     assert_eq!(stats.total_files, 2);
     assert_eq!(stats.image_count, 2);

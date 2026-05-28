@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::{DbError, Result};
 
 use super::Db;
 
@@ -39,14 +39,16 @@ impl ScanRepository for Db {
         let conn = self.conn()?;
 
         let id: i64 = conn
-            .prepare("SELECT nextval('scan_runs_id_seq')")?
-            .query_row([], |row| row.get(0))?;
+            .prepare("SELECT nextval('scan_runs_id_seq')")
+            .and_then(|mut s| s.query_row([], |row| row.get(0)))
+            .map_err(DbError::create_scan_run)?;
 
         conn.execute(
             "INSERT INTO scan_runs (id, scan_level, hash_type, root_dir)
              VALUES (?, ?, ?, ?)",
             duckdb::params![id, scan_level, hash_type, root_dir],
-        )?;
+        )
+        .map_err(DbError::create_scan_run)?;
 
         Ok(id)
     }
@@ -61,7 +63,8 @@ impl ScanRepository for Db {
         conn.execute(
             "UPDATE scan_runs SET files_processed = ?, files_total = ? WHERE id = ?",
             duckdb::params![files_processed, files_total, scan_run_id],
-        )?;
+        )
+        .map_err(|e| DbError::update_scan_progress(scan_run_id, e))?;
         Ok(())
     }
 
@@ -75,7 +78,8 @@ impl ScanRepository for Db {
         conn.execute(
             "UPDATE scan_runs SET status = ?, completed_at = current_timestamp, error_message = ? WHERE id = ?",
             duckdb::params![status, error_message, scan_run_id],
-        )?;
+        )
+        .map_err(|e| DbError::complete_scan_run(scan_run_id, e))?;
         Ok(())
     }
 }

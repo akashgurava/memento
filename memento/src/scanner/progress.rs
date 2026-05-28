@@ -1,9 +1,19 @@
+//! Progress reporting abstraction for scan operations.
+//!
+//! Defines the [`ProgressReporter`] trait that decouples scan logic from the
+//! presentation layer. Implementations exist for Tauri events, CLI terminal
+//! output, and no-op (tests).
+
 use serde::Serialize;
 
+/// Real-time progress snapshot emitted during any scan stage.
+///
+/// Serializable so Tauri can forward it directly as a JSON event payload.
 #[derive(Debug, Clone, Serialize)]
 pub struct ScanProgress {
     pub scan_run_id: i64,
-    pub level: u8,
+    /// Scan stage: "stats", "metadata", or "hash"
+    pub stage: String,
     pub hash_type: Option<String>,
     pub status: String,
     pub files_processed: i64,

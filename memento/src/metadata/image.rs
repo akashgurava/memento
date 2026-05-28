@@ -25,60 +25,58 @@ pub fn extract_image_metadata(path: &str) -> Vec<MetadataEntry> {
             _ => "exif_other".to_string(),
         };
 
-        // Try to extract value in the most appropriate form
-        let (value_text, value_int, value_real) = extract_field_value(field);
-
-        entries.push((namespace, tag_name, value_text, value_int, value_real));
+        let value = extract_field_value(field);
+        entries.push((namespace, tag_name, value));
     }
 
     entries
 }
 
-fn extract_field_value(field: &exif::Field) -> (Option<String>, Option<i64>, Option<f64>) {
+fn extract_field_value(field: &exif::Field) -> Option<String> {
     match &field.value {
         exif::Value::Byte(v) => {
             if v.len() == 1 {
-                (None, Some(v[0] as i64), None)
+                Some(v[0].to_string())
             } else {
-                (Some(format!("{:?}", v)), None, None)
+                Some(format!("{:?}", v))
             }
         }
         exif::Value::Short(v) => {
             if v.len() == 1 {
-                (None, Some(v[0] as i64), None)
+                Some(v[0].to_string())
             } else {
-                (Some(format!("{:?}", v)), None, None)
+                Some(format!("{:?}", v))
             }
         }
         exif::Value::Long(v) => {
             if v.len() == 1 {
-                (None, Some(v[0] as i64), None)
+                Some(v[0].to_string())
             } else {
-                (Some(format!("{:?}", v)), None, None)
+                Some(format!("{:?}", v))
             }
         }
         exif::Value::Rational(v) => {
             if v.len() == 1 {
                 let r = v[0];
                 if r.denom != 0 {
-                    (None, None, Some(r.num as f64 / r.denom as f64))
+                    Some(format!("{}", r.num as f64 / r.denom as f64))
                 } else {
-                    (Some(format!("{}/{}", r.num, r.denom)), None, None)
+                    Some(format!("{}/{}", r.num, r.denom))
                 }
             } else {
-                (Some(field.display_value().to_string()), None, None)
+                Some(field.display_value().to_string())
             }
         }
         exif::Value::SRational(v) => {
             if v.len() == 1 {
                 let r = v[0];
                 if r.denom != 0 {
-                    (None, None, Some(r.num as f64 / r.denom as f64))
+                    Some(format!("{}", r.num as f64 / r.denom as f64))
                 } else {
-                    (Some(format!("{}/{}", r.num, r.denom)), None, None)
+                    Some(format!("{}/{}", r.num, r.denom))
                 }
             } else {
-                (Some(field.display_value().to_string()), None, None)
+                Some(field.display_value().to_string())
             }
         }
         exif::Value::Ascii(v) => {
@@ -87,15 +85,19 @@ fn extract_field_value(field: &exif::Field) -> (Option<String>, Option<i64>, Opt
                 .filter_map(|s| std::str::from_utf8(s).ok())
                 .collect::<Vec<_>>()
                 .join(", ");
-            (Some(text), None, None)
+            if text.is_empty() {
+                None
+            } else {
+                Some(text)
+            }
         }
         exif::Value::Undefined(v, _) => {
             if v.len() <= 64 {
-                (Some(format!("{:?}", v)), None, None)
+                Some(format!("{:?}", v))
             } else {
-                (Some(format!("[{} bytes]", v.len())), None, None)
+                Some(format!("[{} bytes]", v.len()))
             }
         }
-        _ => (Some(field.display_value().to_string()), None, None),
+        _ => Some(field.display_value().to_string()),
     }
 }

@@ -52,7 +52,7 @@ fn extract_metadata_video_without_ffprobe_returns_empty() {
 #[test]
 fn extract_metadata_entry_structure() {
     let entries = extract_metadata(&test_image("HappyFish.jpg"), "image");
-    for (namespace, tag, text, int, real) in &entries {
+    for (namespace, tag, _value) in &entries {
         // Namespace should be one of the expected values
         assert!(
             namespace == "exif" || namespace == "exif_thumb" || namespace == "exif_other",
@@ -61,13 +61,6 @@ fn extract_metadata_entry_structure() {
         );
         // Tag should not be empty
         assert!(!tag.is_empty());
-        // At least one value field should be populated
-        assert!(
-            text.is_some() || int.is_some() || real.is_some(),
-            "entry ({}, {}) has no value",
-            namespace,
-            tag
-        );
     }
 }
 

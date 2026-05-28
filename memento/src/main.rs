@@ -1,3 +1,4 @@
+use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use clap::{Parser, Subcommand};
@@ -5,29 +6,68 @@ use tokio_util::sync::CancellationToken;
 
 use memento::config::{self, AppConfig};
 use memento::db::Db;
+use memento::error::{DbError, HashError, Result};
 use memento::scanner::progress::{ProgressReporter, ScanProgress};
-use memento::scanner::{level1, level2, level3};
+use memento::scanner::{hash_scan, metadata_scan, stats};
 
 struct CliProgressReporter;
+
+impl CliProgressReporter {
+    fn term_width() -> usize {
+        std::env::var("COLUMNS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(80)
+    }
+
+    fn progress_bar(processed: i64, total: i64, bar_width: usize) -> String {
+        let ratio = if total > 0 {
+            processed as f64 / total as f64
+        } else {
+            0.0
+        };
+        let filled = (ratio * bar_width as f64) as usize;
+        let empty = bar_width.saturating_sub(filled);
+        format!("{}{}", "█".repeat(filled), "░".repeat(empty))
+    }
+}
 
 impl ProgressReporter for CliProgressReporter {
     fn report(&self, progress: &ScanProgress) {
         match progress.status.as_str() {
             "completed" => {
+                let width = Self::term_width();
+                print!("\r{}\r", " ".repeat(width));
                 println!(
-                    "[level {}] Completed. {} files processed in {:.1}s",
-                    progress.level, progress.files_processed, progress.elapsed_secs
+                    "[{}] Completed. {} files in {:.1}s",
+                    progress.stage, progress.files_processed, progress.elapsed_secs
                 );
             }
             _ => {
-                let total = progress
-                    .files_total
-                    .map(|t| format!("/{}", t))
-                    .unwrap_or_default();
-                print!(
-                    "\r[level {}] {}{} files processed ({:.1}s)    ",
-                    progress.level, progress.files_processed, total, progress.elapsed_secs
-                );
+                let width = Self::term_width();
+
+                let line = if let Some(total) = progress.files_total {
+                    let pct = if total > 0 {
+                        (progress.files_processed as f64 / total as f64 * 100.0) as u32
+                    } else {
+                        0
+                    };
+                    let bar = Self::progress_bar(progress.files_processed, total, 20);
+                    format!(
+                        "[{}] {} {}/{} ({}%)",
+                        progress.stage, bar, progress.files_processed, total, pct
+                    )
+                } else {
+                    format!(
+                        "[{}] {} files ({:.1}s)",
+                        progress.stage, progress.files_processed, progress.elapsed_secs
+                    )
+                };
+
+                let display_width = line.chars().count();
+                let pad = " ".repeat(width.saturating_sub(display_width));
+                print!("\r{}{}", line, pad);
+                let _ = std::io::stdout().flush();
             }
         }
     }
@@ -37,7 +77,7 @@ impl ProgressReporter for CliProgressReporter {
 #[command(name = "memento", about = "Photo library manager CLI")]
 struct Cli {
     /// Path to config file
-    #[arg(short, long, default_value = "config.toml")]
+    #[arg(short, long, default_value = "config.yaml")]
     config: PathBuf,
 
     /// Path to database file (overrides config)
@@ -71,11 +111,11 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum ScanAction {
-    /// Run Level 1 stats scan (fast file counting)
+    /// Run stats scan (fast file counting)
     Stats,
-    /// Run Level 2 metadata scan (incremental)
+    /// Run metadata scan (incremental)
     Metadata,
-    /// Run Level 3 hash scan for a specific algorithm
+    /// Run hash scan for a specific algorithm
     Hash {
         /// Algorithm: blake3, content_blake3, phash, dhash, whash
         algo: String,
@@ -94,7 +134,7 @@ enum ConfigAction {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> std::result::Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -102,15 +142,17 @@ async fn main() {
         )
         .init();
 
+    run().map_err(|e| {
+        tracing::error!("{}", e);
+        Box::new(e) as Box<dyn std::error::Error>
+    })
+}
+
+fn run() -> Result<()> {
     let cli = Cli::parse();
     let config_path = cli.config.clone();
+    let app_config = config::load_from(&config_path)?;
 
-    let app_config = config::load_from(&config_path).unwrap_or_else(|e| {
-        eprintln!("Failed to load config: {}", e);
-        std::process::exit(1);
-    });
-
-    // Priority: --db flag > config.db_path > ./memento.duckdb
     let db_path = cli.db.unwrap_or_else(|| {
         app_config
             .db_path
@@ -119,66 +161,68 @@ async fn main() {
             .unwrap_or_else(|| PathBuf::from("memento.duckdb"))
     });
 
+    let cancel_token = CancellationToken::new();
+    let cancel_token_clone = cancel_token.clone();
+    ctrlc::set_handler(move || {
+        cancel_token_clone.cancel();
+    })
+    .ok();
+
     match cli.command {
         Commands::Config { action } => handle_config(action, app_config, &config_path),
         Commands::Stats => handle_stats(&db_path),
-        Commands::Scan { action } => handle_scan(action, app_config, &db_path),
+        Commands::Scan { action } => handle_scan(action, app_config, &db_path, &cancel_token),
         Commands::Dupes { hash_type } => handle_dupes(&db_path, &hash_type),
     }
 }
 
-fn handle_config(action: ConfigAction, config: AppConfig, config_path: &Path) {
+fn handle_config(action: ConfigAction, config: AppConfig, config_path: &Path) -> Result<()> {
     match action {
         ConfigAction::Show => {
-            let toml_str = toml::to_string_pretty(&config).expect("Failed to serialize config");
-            println!("{}", toml_str);
+            let yaml_str = serde_yml::to_string(&config)?;
+            println!("{}", yaml_str);
         }
         ConfigAction::SetRoots { paths } => {
             let mut config = config;
-            config.scan.roots = paths.clone();
-            config::save_to(&config, config_path).unwrap_or_else(|e| {
-                eprintln!("Failed to save config: {}", e);
-                std::process::exit(1);
-            });
-            println!("Scan roots updated: {:?}", paths);
+            config.scan.roots = paths.iter().map(|p| p.replace('\\', "/")).collect();
+            config::save_to(&config, config_path)?;
+            println!("Scan roots updated: {:?}", config.scan.roots);
         }
     }
+    Ok(())
 }
 
-fn handle_stats(db_path: &Path) {
+fn handle_stats(db_path: &Path) -> Result<()> {
     if !db_path.exists() {
-        println!(
-            "No database found at {}. Run a scan first.",
-            db_path.display()
-        );
-        return;
+        return Err(DbError::init(
+            db_path.display().to_string(),
+            "database not found (run a scan first)",
+        ));
     }
 
-    let db = open_db(db_path);
-    let conn = db.conn().unwrap_or_else(|e| {
-        eprintln!("Failed to lock database: {}", e);
-        std::process::exit(1);
-    });
+    let db = Db::open(db_path)?;
+    let conn = db.conn()?;
 
     let total: i64 = conn
-        .prepare("SELECT COUNT(*) FROM files WHERE is_missing = false")
+        .prepare("SELECT COUNT(*) FROM v_files WHERE is_missing = false")
         .and_then(|mut s| s.query_row([], |r| r.get(0)))
-        .unwrap_or(0);
+        .map_err(|e| DbError::query("show_stats_total", e))?;
 
     let total_size: i64 = conn
-        .prepare("SELECT COALESCE(SUM(size_bytes), 0) FROM files WHERE is_missing = false")
+        .prepare("SELECT COALESCE(SUM(size_bytes), 0) FROM v_files WHERE is_missing = false")
         .and_then(|mut s| s.query_row([], |r| r.get(0)))
-        .unwrap_or(0);
+        .map_err(|e| DbError::query("show_stats_size", e))?;
 
     let images: i64 = conn
-        .prepare("SELECT COUNT(*) FROM files WHERE file_type = 'image' AND is_missing = false")
+        .prepare("SELECT COUNT(*) FROM v_files WHERE file_type = 'image' AND is_missing = false")
         .and_then(|mut s| s.query_row([], |r| r.get(0)))
-        .unwrap_or(0);
+        .map_err(|e| DbError::query("show_stats_images", e))?;
 
     let videos: i64 = conn
-        .prepare("SELECT COUNT(*) FROM files WHERE file_type = 'video' AND is_missing = false")
+        .prepare("SELECT COUNT(*) FROM v_files WHERE file_type = 'video' AND is_missing = false")
         .and_then(|mut s| s.query_row([], |r| r.get(0)))
-        .unwrap_or(0);
+        .map_err(|e| DbError::query("show_stats_videos", e))?;
+
 
     println!("Library Statistics:");
     println!("  Total files: {}", total);
@@ -189,96 +233,83 @@ fn handle_stats(db_path: &Path) {
     println!("  Images:      {}", images);
     println!("  Videos:      {}", videos);
     println!("  Other:       {}", total - images - videos);
+
+    Ok(())
 }
 
-fn handle_scan(action: ScanAction, config: AppConfig, db_path: &Path) {
+fn handle_scan(
+    action: ScanAction,
+    config: AppConfig,
+    db_path: &Path,
+    cancel_token: &CancellationToken,
+) -> Result<()> {
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
 
-    let db = open_db(db_path);
+    let db = Db::open(db_path)?;
     let reporter = CliProgressReporter;
-    let cancel_token = CancellationToken::new();
 
     match action {
         ScanAction::Stats => {
-            println!("Running Level 1 stats scan...");
-            match level1::run_stats_scan(&config, 0, &reporter, &cancel_token) {
-                Ok(stats) => {
-                    println!("\nResults:");
-                    println!("  Total files: {}", stats.total_files);
-                    println!(
-                        "  Total size:  {:.2} GB",
-                        stats.total_size_bytes as f64 / 1_073_741_824.0
-                    );
-                    println!(
-                        "  Images:      {} ({:.2} GB)",
-                        stats.image_count,
-                        stats.image_size_bytes as f64 / 1_073_741_824.0
-                    );
-                    println!(
-                        "  Videos:      {} ({:.2} GB)",
-                        stats.video_count,
-                        stats.video_size_bytes as f64 / 1_073_741_824.0
-                    );
-                    println!(
-                        "  Other:       {} ({:.2} GB)",
-                        stats.other_count,
-                        stats.other_size_bytes as f64 / 1_073_741_824.0
-                    );
-                }
-                Err(e) => eprintln!("Scan failed: {}", e),
-            }
+            let library_stats =
+                stats::run_stats_scan(&config, &db, 0, &reporter, cancel_token)?;
+            println!("\nResults:");
+            println!("  Total files: {}", library_stats.total_files);
+            println!(
+                "  Total size:  {:.2} GB",
+                library_stats.total_size_bytes as f64 / 1_073_741_824.0
+            );
+            println!(
+                "  Images:      {} ({:.2} GB)",
+                library_stats.image_count,
+                library_stats.image_size_bytes as f64 / 1_073_741_824.0
+            );
+            println!(
+                "  Videos:      {} ({:.2} GB)",
+                library_stats.video_count,
+                library_stats.video_size_bytes as f64 / 1_073_741_824.0
+            );
+            println!(
+                "  Other:       {} ({:.2} GB)",
+                library_stats.other_count,
+                library_stats.other_size_bytes as f64 / 1_073_741_824.0
+            );
         }
         ScanAction::Metadata => {
-            println!("Running Level 2 metadata scan...");
-            match level2::run_metadata_scan(&config, &db, 0, &reporter, &cancel_token) {
-                Ok(()) => println!("\nMetadata scan complete."),
-                Err(e) => eprintln!("Scan failed: {}", e),
-            }
+            metadata_scan::run_metadata_scan(&config, &db, 0, &reporter, cancel_token)?;
         }
         ScanAction::Hash { algo } => {
-            println!("Running Level 3 hash scan (algorithm: {})...", algo);
-            match level3::run_hash_scan(&config, &db, 0, &algo, &reporter, &cancel_token) {
-                Ok(()) => println!("\nHash scan complete."),
-                Err(e) => eprintln!("Scan failed: {}", e),
-            }
+            hash_scan::run_hash_scan(&config, &db, 0, &algo, &reporter, cancel_token)?;
         }
     }
+
+    Ok(())
 }
 
-fn handle_dupes(db_path: &Path, hash_type: &str) {
-    let column = match hash_type {
-        "blake3" => "hash_blake3",
-        "content_blake3" => "hash_content_blake3",
-        _ => {
-            eprintln!(
-                "Invalid hash type: {}. Use blake3 or content_blake3.",
-                hash_type
-            );
-            std::process::exit(1);
-        }
+fn handle_dupes(db_path: &Path, hash_type: &str) -> Result<()> {
+    match hash_type {
+        "blake3" | "content_blake3" => {}
+        _ => return Err(HashError::unknown_algorithm(hash_type)),
     };
 
-    let db = open_db(db_path);
-    let conn = db.conn().unwrap_or_else(|e| {
-        eprintln!("Failed to lock database: {}", e);
-        std::process::exit(1);
-    });
+    let db = Db::open(db_path)?;
+    let conn = db.conn()?;
 
     let sql = format!(
-        "SELECT {col}, COUNT(*) as cnt, SUM(size_bytes) as total_size
-         FROM files WHERE {col} IS NOT NULL AND is_missing = false
-         GROUP BY {col} HAVING COUNT(*) > 1
+        "SELECT h.hash_value, COUNT(*) as cnt, SUM(v.size_bytes) as total_size
+         FROM v_file_hashes h
+         JOIN v_files v ON v.id = h.file_id
+         WHERE h.hash_value IS NOT NULL AND h.hash_name = '{ht}' AND v.is_missing = false
+         GROUP BY h.hash_value HAVING COUNT(*) > 1
          ORDER BY total_size DESC
          LIMIT 50",
-        col = column
+        ht = hash_type
     );
 
-    let mut stmt = conn.prepare(&sql).unwrap_or_else(|e| {
-        eprintln!("Query failed: {}", e);
-        std::process::exit(1);
-    });
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| DbError::query("find_duplicates_prepare", e))?;
 
     let groups: Vec<(String, i64, i64)> = stmt
         .query_map([], |row| {
@@ -288,16 +319,13 @@ fn handle_dupes(db_path: &Path, hash_type: &str) {
                 row.get::<_, i64>(2)?,
             ))
         })
-        .unwrap_or_else(|e| {
-            eprintln!("Query failed: {}", e);
-            std::process::exit(1);
-        })
+        .map_err(|e| DbError::query("find_duplicates_fetch", e))?
         .filter_map(|r| r.ok())
         .collect();
 
     if groups.is_empty() {
         println!("No duplicates found (hash type: {}).", hash_type);
-        return;
+        return Ok(());
     }
 
     println!(
@@ -312,11 +340,6 @@ fn handle_dupes(db_path: &Path, hash_type: &str) {
             (*size as f64 - (*size as f64 / *count as f64)) / 1_048_576.0
         );
     }
-}
 
-fn open_db(path: &Path) -> Db {
-    Db::open(path).unwrap_or_else(|e| {
-        eprintln!("Failed to open database: {}", e);
-        std::process::exit(1);
-    })
+    Ok(())
 }

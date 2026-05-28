@@ -1,7 +1,21 @@
+//! Database layer for memento.
+//!
+//! Built on DuckDB with a single-writer model (`Mutex<Connection>`).
+//! Access is organized into trait-based repositories:
+//!
+//! - [`FileRepository`] — file upsert, missing detection, active file queries
+//! - [`HashRepository`] — hash storage and retrieval for all algorithms
+//! - [`MetadataRepository`] — EAV metadata tag storage
+//! - [`ScanRepository`] — scan run lifecycle (create, progress, complete)
+//!
+//! Each trait is implemented on [`Db`]. For batch operations that need a single
+//! lock held across multiple writes, use [`Db::conn()`] with the `_impl` helpers.
+
 pub(crate) mod files;
 pub(crate) mod hashes;
 pub(crate) mod metadata_repo;
 pub mod migrations;
+mod scan_store_impl;
 pub(crate) mod scans;
 
 pub use files::{FileRecord, FileRepository};
@@ -28,12 +42,14 @@ pub struct Db {
 impl Db {
     /// Open (or create) the database at `path` and run migrations.
     pub fn open(path: &Path) -> Result<Self> {
+        tracing::info!("OPEN_DB: START. path: {}", path.display());
         let conn =
             Connection::open(path).map_err(|e| DbError::init(path.display().to_string(), e))?;
         let db = Self {
             conn: Mutex::new(conn),
         };
         db.migrate()?;
+        tracing::info!("OPEN_DB: SUCCESS. path: {}", path.display());
         Ok(db)
     }
 

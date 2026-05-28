@@ -19,13 +19,13 @@ pub struct ScanConfig {
     #[serde(default = "default_video_extensions")]
     pub video_extensions: Vec<String>,
     #[serde(default)]
-    pub level2: Level2Config,
+    pub metadata: MetadataScanConfig,
     #[serde(default)]
-    pub level3: Level3Config,
+    pub hash: HashScanConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Level2Config {
+pub struct MetadataScanConfig {
     #[serde(default = "default_batch_size_500")]
     pub batch_size: usize,
     #[serde(default)]
@@ -33,7 +33,7 @@ pub struct Level2Config {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Level3Config {
+pub struct HashScanConfig {
     #[serde(default = "default_batch_size_100")]
     pub batch_size: usize,
     #[serde(default)]
@@ -56,13 +56,13 @@ impl Default for ScanConfig {
             roots: Vec::new(),
             image_extensions: default_image_extensions(),
             video_extensions: default_video_extensions(),
-            level2: Level2Config::default(),
-            level3: Level3Config::default(),
+            metadata: MetadataScanConfig::default(),
+            hash: HashScanConfig::default(),
         }
     }
 }
 
-impl Default for Level2Config {
+impl Default for MetadataScanConfig {
     fn default() -> Self {
         Self {
             batch_size: 500,
@@ -71,7 +71,7 @@ impl Default for Level2Config {
     }
 }
 
-impl Default for Level3Config {
+impl Default for HashScanConfig {
     fn default() -> Self {
         Self {
             batch_size: 100,

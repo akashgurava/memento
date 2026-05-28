@@ -24,9 +24,7 @@ pub fn extract_video_metadata(path: &str) -> Vec<MetadataEntry> {
         Ok(o) => o,
         Err(_) => {
             FFPROBE_WARN.call_once(|| {
-                tracing::warn!(
-                    "ffprobe not found in PATH — video metadata extraction will be skipped"
-                );
+                tracing::warn!("EXTRACT_VIDEO_METADATA_INIT: SKIPPED. reason: ffprobe not found in PATH, video metadata will not be extracted");
             });
             return entries;
         }
@@ -44,23 +42,13 @@ pub fn extract_video_metadata(path: &str) -> Vec<MetadataEntry> {
     // Extract format-level tags
     if let Some(format) = json.get("format") {
         if let Some(duration) = format.get("duration").and_then(|v| v.as_str()) {
-            if let Ok(d) = duration.parse::<f64>() {
-                entries.push(("video".into(), "duration".into(), None, None, Some(d)));
-            }
+            entries.push(("video".into(), "duration".into(), Some(duration.into())));
         }
         if let Some(bit_rate) = format.get("bit_rate").and_then(|v| v.as_str()) {
-            if let Ok(br) = bit_rate.parse::<i64>() {
-                entries.push(("video".into(), "bit_rate".into(), None, Some(br), None));
-            }
+            entries.push(("video".into(), "bit_rate".into(), Some(bit_rate.into())));
         }
         if let Some(format_name) = format.get("format_name").and_then(|v| v.as_str()) {
-            entries.push((
-                "video".into(),
-                "format_name".into(),
-                Some(format_name.into()),
-                None,
-                None,
-            ));
+            entries.push(("video".into(), "format_name".into(), Some(format_name.into())));
         }
 
         // Extract format tags (creation_time, etc.)
@@ -70,7 +58,7 @@ pub fn extract_video_metadata(path: &str) -> Vec<MetadataEntry> {
                     .as_str()
                     .map(|s| s.to_string())
                     .or_else(|| Some(value.to_string()));
-                entries.push(("video_tag".into(), key.clone(), text, None, None));
+                entries.push(("video_tag".into(), key.clone(), text));
             }
         }
     }
@@ -88,8 +76,6 @@ pub fn extract_video_metadata(path: &str) -> Vec<MetadataEntry> {
                 "video".into(),
                 format!("{}_codec_type", prefix),
                 Some(codec_type.into()),
-                None,
-                None,
             ));
 
             if let Some(codec_name) = stream.get("codec_name").and_then(|v| v.as_str()) {
@@ -97,8 +83,6 @@ pub fn extract_video_metadata(path: &str) -> Vec<MetadataEntry> {
                     "video".into(),
                     format!("{}_codec_name", prefix),
                     Some(codec_name.into()),
-                    None,
-                    None,
                 ));
             }
 
@@ -107,18 +91,14 @@ pub fn extract_video_metadata(path: &str) -> Vec<MetadataEntry> {
                     entries.push((
                         "video".into(),
                         format!("{}_width", prefix),
-                        None,
-                        Some(w),
-                        None,
+                        Some(w.to_string()),
                     ));
                 }
                 if let Some(h) = stream.get("height").and_then(|v| v.as_i64()) {
                     entries.push((
                         "video".into(),
                         format!("{}_height", prefix),
-                        None,
-                        Some(h),
-                        None,
+                        Some(h.to_string()),
                     ));
                 }
                 if let Some(fps) = stream.get("r_frame_rate").and_then(|v| v.as_str()) {
@@ -126,8 +106,6 @@ pub fn extract_video_metadata(path: &str) -> Vec<MetadataEntry> {
                         "video".into(),
                         format!("{}_frame_rate", prefix),
                         Some(fps.into()),
-                        None,
-                        None,
                     ));
                 }
             }
@@ -138,17 +116,13 @@ pub fn extract_video_metadata(path: &str) -> Vec<MetadataEntry> {
                         "video".into(),
                         format!("{}_sample_rate", prefix),
                         Some(sr.into()),
-                        None,
-                        None,
                     ));
                 }
                 if let Some(channels) = stream.get("channels").and_then(|v| v.as_i64()) {
                     entries.push((
                         "video".into(),
                         format!("{}_channels", prefix),
-                        None,
-                        Some(channels),
-                        None,
+                        Some(channels.to_string()),
                     ));
                 }
             }

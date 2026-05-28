@@ -1,8 +1,8 @@
 pub mod image;
 pub mod video;
 
-/// A metadata entry: (namespace, tag, value_text, value_int, value_real)
-pub type MetadataEntry = (String, String, Option<String>, Option<i64>, Option<f64>);
+/// A metadata entry: (namespace, tag, value)
+pub type MetadataEntry = (String, String, Option<String>);
 
 /// Extract all metadata from a file based on its type
 pub fn extract_metadata(path: &str, file_type: &str) -> Vec<MetadataEntry> {

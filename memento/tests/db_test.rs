@@ -17,12 +17,12 @@ fn init_db_creates_tables() {
     let conn = db.conn().unwrap();
 
     let count: i64 = conn
-        .prepare("SELECT COUNT(*) FROM information_schema.tables WHERE table_name IN ('files', 'file_metadata', 'scan_runs', 'schema_migrations')")
+        .prepare("SELECT COUNT(*) FROM information_schema.tables WHERE table_name IN ('file_master', 'file_stats', 'file_metadata', 'file_hashes', 'scan_runs', 'schema_migrations')")
         .unwrap()
         .query_row([], |r| r.get(0))
         .unwrap();
 
-    assert_eq!(count, 4);
+    assert_eq!(count, 6);
 }
 
 #[test]
@@ -43,7 +43,7 @@ fn init_db_idempotent() {
     assert_eq!(count, 1);
 }
 
-// --- upsert_file ---
+// --- upsert_file (insert observations) ---
 
 #[test]
 fn upsert_file_insert_new() {
@@ -64,7 +64,7 @@ fn upsert_file_insert_new() {
 }
 
 #[test]
-fn upsert_file_returns_same_id_on_update() {
+fn upsert_file_returns_same_id_on_second_observation() {
     let db = setup_db();
 
     let id1 = db
@@ -95,14 +95,22 @@ fn upsert_file_returns_same_id_on_update() {
 
     assert_eq!(id1, id2);
 
-    // Verify size was updated
+    // Verify latest state shows new size via v_files
     let conn = db.conn().unwrap();
     let size: i64 = conn
-        .prepare("SELECT size_bytes FROM files WHERE id = ?")
+        .prepare("SELECT size_bytes FROM v_files WHERE id = ?")
         .unwrap()
         .query_row([id1], |r| r.get(0))
         .unwrap();
     assert_eq!(size, 2048);
+
+    // Both observations recorded in file_stats
+    let stat_count: i64 = conn
+        .prepare("SELECT COUNT(*) FROM file_stats WHERE file_id = ?")
+        .unwrap()
+        .query_row([id1], |r| r.get(0))
+        .unwrap();
+    assert_eq!(stat_count, 2);
 }
 
 #[test]
@@ -161,7 +169,7 @@ fn mark_missing_sets_flag() {
 
     let conn = db.conn().unwrap();
     let is_missing: bool = conn
-        .prepare("SELECT is_missing FROM files WHERE id = ?")
+        .prepare("SELECT is_missing FROM v_files WHERE id = ?")
         .unwrap()
         .query_row([id], |r| r.get(0))
         .unwrap();
@@ -201,14 +209,14 @@ fn upsert_after_mark_missing_clears_flag() {
 
     let conn = db.conn().unwrap();
     let is_missing: bool = conn
-        .prepare("SELECT is_missing FROM files WHERE id = ?")
+        .prepare("SELECT is_missing FROM v_files WHERE id = ?")
         .unwrap()
         .query_row([id], |r| r.get(0))
         .unwrap();
     assert!(!is_missing);
 }
 
-// --- set_hash / set_perceptual_hash ---
+// --- set_hash ---
 
 #[test]
 fn set_hash_blake3() {
@@ -226,7 +234,7 @@ fn set_hash_blake3() {
 
     let conn = db.conn().unwrap();
     let hash: String = conn
-        .prepare("SELECT hash_blake3 FROM files WHERE id = ?")
+        .prepare("SELECT hash_value FROM v_file_hashes WHERE file_id = ? AND hash_name = 'blake3'")
         .unwrap()
         .query_row([id], |r| r.get(0))
         .unwrap();
@@ -247,7 +255,7 @@ fn set_hash_content_blake3() {
 
     let conn = db.conn().unwrap();
     let hash: String = conn
-        .prepare("SELECT hash_content_blake3 FROM files WHERE id = ?")
+        .prepare("SELECT hash_value FROM v_file_hashes WHERE file_id = ? AND hash_name = 'content_blake3'")
         .unwrap()
         .query_row([id], |r| r.get(0))
         .unwrap();
@@ -261,7 +269,7 @@ fn set_hash_invalid_type_errors() {
         .upsert_file("/p/z.jpg", "/p", "z.jpg", Some("jpg"), 100, 0, 0, "image")
         .unwrap();
 
-    let err = db.set_hash(id, "phash", "value").unwrap_err();
+    let err = db.set_hash(id, "sha256", "value").unwrap_err();
     assert!(err.to_string().contains("HASH_UNKNOWN_ALGORITHM"));
 }
 
@@ -275,12 +283,12 @@ fn set_perceptual_hash_phash() {
     db.set_perceptual_hash(id, "phash", 12345678).unwrap();
 
     let conn = db.conn().unwrap();
-    let hash: i64 = conn
-        .prepare("SELECT hash_phash FROM files WHERE id = ?")
+    let hash: String = conn
+        .prepare("SELECT hash_value FROM v_file_hashes WHERE file_id = ? AND hash_name = 'phash'")
         .unwrap()
         .query_row([id], |r| r.get(0))
         .unwrap();
-    assert_eq!(hash, 12345678);
+    assert_eq!(hash, "12345678");
 }
 
 #[test]
@@ -290,47 +298,8 @@ fn set_perceptual_hash_invalid_type_errors() {
         .upsert_file("/p/b.jpg", "/p", "b.jpg", Some("jpg"), 100, 0, 0, "image")
         .unwrap();
 
-    let err = db.set_perceptual_hash(id, "blake3", 999).unwrap_err();
+    let err = db.set_perceptual_hash(id, "sha256", 999).unwrap_err();
     assert!(err.to_string().contains("HASH_UNKNOWN_ALGORITHM"));
-}
-
-// --- invalidate_hashes ---
-
-#[test]
-fn invalidate_hashes_clears_all() {
-    let db = setup_db();
-    let id = db
-        .upsert_file(
-            "/p/inv.jpg",
-            "/p",
-            "inv.jpg",
-            Some("jpg"),
-            100,
-            0,
-            0,
-            "image",
-        )
-        .unwrap();
-
-    db.set_hash(id, "blake3", "abc123").unwrap();
-    db.set_hash(id, "content_blake3", "def456").unwrap();
-    db.set_perceptual_hash(id, "phash", 111).unwrap();
-    db.set_perceptual_hash(id, "dhash", 222).unwrap();
-    db.set_perceptual_hash(id, "whash", 333).unwrap();
-
-    db.invalidate_hashes(id).unwrap();
-
-    let conn = db.conn().unwrap();
-    let nulls: i64 = conn
-        .prepare(
-            "SELECT CASE WHEN hash_blake3 IS NULL AND hash_content_blake3 IS NULL
-                    AND hash_phash IS NULL AND hash_dhash IS NULL AND hash_whash IS NULL
-                    THEN 1 ELSE 0 END FROM files WHERE id = ?",
-        )
-        .unwrap()
-        .query_row([id], |r| r.get(0))
-        .unwrap();
-    assert_eq!(nulls, 1);
 }
 
 // --- insert_metadata_batch ---
@@ -352,15 +321,9 @@ fn insert_metadata_batch_stores_entries() {
         .unwrap();
 
     let entries = vec![
-        (
-            "exif".into(),
-            "Make".into(),
-            Some("Canon".into()),
-            None,
-            None,
-        ),
-        ("exif".into(), "ISO".into(), None, Some(400), None),
-        ("exif".into(), "FocalLength".into(), None, None, Some(50.0)),
+        ("exif".into(), "Make".into(), Some("Canon".into())),
+        ("exif".into(), "ISO".into(), Some("400".into())),
+        ("exif".into(), "FocalLength".into(), Some("50.0".into())),
     ];
 
     db.insert_metadata_batch(id, &entries).unwrap();
@@ -375,7 +338,7 @@ fn insert_metadata_batch_stores_entries() {
 }
 
 #[test]
-fn insert_metadata_batch_replaces_on_second_call() {
+fn insert_metadata_batch_appends_on_second_call() {
     let db = setup_db();
     let id = db
         .upsert_file(
@@ -391,30 +354,12 @@ fn insert_metadata_batch_replaces_on_second_call() {
         .unwrap();
 
     let entries1 = vec![
-        (
-            "exif".into(),
-            "Make".into(),
-            Some("Nikon".into()),
-            None,
-            None,
-        ),
-        (
-            "exif".into(),
-            "Model".into(),
-            Some("D850".into()),
-            None,
-            None,
-        ),
+        ("exif".into(), "Make".into(), Some("Nikon".into())),
+        ("exif".into(), "Model".into(), Some("D850".into())),
     ];
     db.insert_metadata_batch(id, &entries1).unwrap();
 
-    let entries2 = vec![(
-        "exif".into(),
-        "Make".into(),
-        Some("Canon".into()),
-        None,
-        None,
-    )];
+    let entries2 = vec![("exif".into(), "Make".into(), Some("Canon".into()))];
     db.insert_metadata_batch(id, &entries2).unwrap();
 
     let conn = db.conn().unwrap();
@@ -423,7 +368,15 @@ fn insert_metadata_batch_replaces_on_second_call() {
         .unwrap()
         .query_row([id], |r| r.get(0))
         .unwrap();
-    assert_eq!(count, 1, "second batch should replace first");
+    assert_eq!(count, 3, "second batch appends (append-only)");
+
+    // v_file_metadata shows latest value for Make
+    let latest_make: String = conn
+        .prepare("SELECT value FROM v_file_metadata WHERE file_id = ? AND tag = 'Make'")
+        .unwrap()
+        .query_row([id], |r| r.get(0))
+        .unwrap();
+    assert_eq!(latest_make, "Canon");
 }
 
 // --- get_files_needing_hash ---

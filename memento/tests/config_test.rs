@@ -49,55 +49,59 @@ fn default_config_extensions_are_lowercase() {
 #[test]
 fn default_config_batch_sizes() {
     let config = AppConfig::default();
-    assert_eq!(config.scan.level2.batch_size, 500);
-    assert_eq!(config.scan.level3.batch_size, 100);
-    assert_eq!(config.scan.level3.parallelism, 0);
+    assert_eq!(config.scan.metadata.batch_size, 500);
+    assert_eq!(config.scan.hash.batch_size, 100);
+    assert_eq!(config.scan.hash.parallelism, 0);
 }
 
 #[test]
-fn config_toml_roundtrip() {
+fn config_yaml_roundtrip() {
     let config = AppConfig::default();
-    let toml_str = toml::to_string_pretty(&config).unwrap();
-    let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
+    let yaml_str = serde_yml::to_string(&config).unwrap();
+    let parsed: AppConfig = serde_yml::from_str(&yaml_str).unwrap();
 
     assert_eq!(parsed.schema_version, config.schema_version);
     assert_eq!(parsed.scan.roots, config.scan.roots);
     assert_eq!(parsed.scan.image_extensions, config.scan.image_extensions);
     assert_eq!(parsed.scan.video_extensions, config.scan.video_extensions);
-    assert_eq!(parsed.scan.level2.batch_size, config.scan.level2.batch_size);
-    assert_eq!(parsed.scan.level3.batch_size, config.scan.level3.batch_size);
+    assert_eq!(
+        parsed.scan.metadata.batch_size,
+        config.scan.metadata.batch_size
+    );
+    assert_eq!(parsed.scan.hash.batch_size, config.scan.hash.batch_size);
 }
 
 #[test]
-fn config_toml_roundtrip_with_roots() {
+fn config_yaml_roundtrip_with_roots() {
     let mut config = AppConfig::default();
     config.scan.roots = vec!["/photos".into(), "/backup/photos".into()];
 
-    let toml_str = toml::to_string_pretty(&config).unwrap();
-    let parsed: AppConfig = toml::from_str(&toml_str).unwrap();
+    let yaml_str = serde_yml::to_string(&config).unwrap();
+    let parsed: AppConfig = serde_yml::from_str(&yaml_str).unwrap();
 
     assert_eq!(parsed.scan.roots, vec!["/photos", "/backup/photos"]);
 }
 
 #[test]
-fn config_partial_toml_uses_defaults() {
-    let toml_str = r#"
-        [scan]
-        roots = ["/my/photos"]
-    "#;
-    let parsed: AppConfig = toml::from_str(toml_str).unwrap();
+fn config_partial_yaml_uses_defaults() {
+    let yaml_str = r#"
+scan:
+  roots:
+    - /my/photos
+"#;
+    let parsed: AppConfig = serde_yml::from_str(yaml_str).unwrap();
 
     assert_eq!(parsed.schema_version, 1);
     assert_eq!(parsed.scan.roots, vec!["/my/photos"]);
     // Defaults should fill in
     assert!(!parsed.scan.image_extensions.is_empty());
     assert!(!parsed.scan.video_extensions.is_empty());
-    assert_eq!(parsed.scan.level2.batch_size, 500);
+    assert_eq!(parsed.scan.metadata.batch_size, 500);
 }
 
 #[test]
-fn config_empty_toml_uses_all_defaults() {
-    let parsed: AppConfig = toml::from_str("").unwrap();
+fn config_empty_yaml_uses_all_defaults() {
+    let parsed: AppConfig = serde_yml::from_str("{}").unwrap();
     let default = AppConfig::default();
 
     assert_eq!(parsed.schema_version, default.schema_version);
@@ -105,6 +109,18 @@ fn config_empty_toml_uses_all_defaults() {
         parsed.scan.image_extensions.len(),
         default.scan.image_extensions.len()
     );
+}
+
+#[test]
+fn config_windows_paths_unquoted() {
+    let yaml_str = r#"
+scan:
+  roots:
+    - D:\Photos\Vacation
+    - E:\Backup
+"#;
+    let parsed: AppConfig = serde_yml::from_str(yaml_str).unwrap();
+    assert_eq!(parsed.scan.roots, vec![r"D:\Photos\Vacation", r"E:\Backup"]);
 }
 
 #[test]

@@ -1,0 +1,64 @@
+# Memento configuration
+#
+# Paths: On Windows, use forward slashes (D:/Photos) or single-quoted paths.
+# Double-quoted strings treat backslashes as escape characters.
+
+schema_version: 1
+
+# Path to the database file
+db_path: ./memento.duckdb
+
+scan:
+  # Directories to scan for media files
+  # Windows paths work unquoted: D:\Photos
+  # Or use forward slashes: D:/Photos
+  roots:
+    - ~/Photos
+    # - /Volumes/External/Backup
+    # - D:\My Photos\Backup
+
+  # Recognized image file extensions (case-insensitive matching)
+  image_extensions:
+    - jpg
+    - jpeg
+    - png
+    - tiff
+    - tif
+    - heic
+    - heif
+    - raw
+    - cr2
+    - cr3
+    - nef
+    - arw
+    - orf
+    - rw2
+    - dng
+    - webp
+    - avif
+    - gif
+    - bmp
+    - psd
+
+  # Recognized video file extensions (case-insensitive matching)
+  video_extensions:
+    - mp4
+    - mov
+    - avi
+    - mkv
+    - m4v
+    - wmv
+    - flv
+    - webm
+    - 3gp
+    - mts
+    - m2ts
+    - ts
+
+  level2:
+    batch_size: 500  # Files per batch for metadata extraction
+    parallelism: 0   # 0 = use all CPU cores
+
+  level3:
+    batch_size: 100  # Files per batch for hashing
+    parallelism: 0   # 0 = use all CPU cores

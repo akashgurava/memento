@@ -1,21 +1,13 @@
 use duckdb::Connection;
 
-use crate::error::{HashError, Result};
+use crate::error::{DbError, HashError, Result};
 
 use super::Db;
 
-/// Repository for hash storage and retrieval.
+/// Hash storage and querying for all supported algorithms.
 pub trait HashRepository {
-    /// Clear all hash columns for a file (after modification detected).
-    fn invalidate_hashes(&self, file_id: i64) -> Result<()>;
-
-    /// Update a cryptographic hash column (blake3, content_blake3).
     fn set_hash(&self, file_id: i64, hash_type: &str, value: &str) -> Result<()>;
-
-    /// Update a perceptual hash column (phash, dhash, whash).
     fn set_perceptual_hash(&self, file_id: i64, hash_type: &str, value: i64) -> Result<()>;
-
-    /// Get files missing a specific hash (where that column is NULL).
     fn get_files_needing_hash(
         &self,
         hash_type: &str,
@@ -24,11 +16,6 @@ pub trait HashRepository {
 }
 
 impl HashRepository for Db {
-    fn invalidate_hashes(&self, file_id: i64) -> Result<()> {
-        let conn = self.conn()?;
-        invalidate_hashes_impl(&conn, file_id)
-    }
-
     fn set_hash(&self, file_id: i64, hash_type: &str, value: &str) -> Result<()> {
         let conn = self.conn()?;
         set_hash_impl(&conn, file_id, hash_type, value)
@@ -51,85 +38,109 @@ impl HashRepository for Db {
 
 // --- Internal helpers ---
 
-pub(crate) fn invalidate_hashes_impl(conn: &Connection, file_id: i64) -> Result<()> {
-    conn.execute(
-        "UPDATE files SET
-         hash_blake3 = NULL, hash_content_blake3 = NULL,
-         hash_phash = NULL, hash_dhash = NULL, hash_whash = NULL,
-         metadata_scanned_at = NULL
-         WHERE id = ?",
-        [file_id],
-    )?;
-    Ok(())
+/// Get the latest stat_id for a file_id.
+fn get_latest_stat_id(conn: &Connection, file_id: i64) -> Result<i64> {
+    conn.prepare(
+        "SELECT stat_id FROM file_stats WHERE file_id = ?
+         QUALIFY ROW_NUMBER() OVER (PARTITION BY file_id ORDER BY observed_at DESC) = 1",
+    )
+    .and_then(|mut s| s.query_row([file_id], |row| row.get(0)))
+    .map_err(|e| DbError::set_hash(file_id, "stat_id_lookup", e))
 }
 
+/// Validate hash_name and return it (for insert).
+fn validate_hash_name(hash_type: &str) -> std::result::Result<&str, crate::error::MementoError> {
+    match hash_type {
+        "blake3" | "content_blake3" | "phash" | "dhash" | "whash" => Ok(hash_type),
+        _ => Err(HashError::unknown_algorithm(hash_type)),
+    }
+}
+
+/// Store a cryptographic hash (blake3 or content_blake3) for a file.
 pub(crate) fn set_hash_impl(
     conn: &Connection,
     file_id: i64,
     hash_type: &str,
     value: &str,
 ) -> Result<()> {
-    let column = match hash_type {
-        "blake3" => "hash_blake3",
-        "content_blake3" => "hash_content_blake3",
-        _ => return Err(HashError::unknown_algorithm(hash_type)),
-    };
-    let sql = format!("UPDATE files SET {} = ? WHERE id = ?", column);
-    conn.execute(&sql, duckdb::params![value, file_id])?;
+    validate_hash_name(hash_type)?;
+    let stat_id = get_latest_stat_id(conn, file_id)?;
+
+    conn.execute(
+        "INSERT INTO file_hashes (file_id, stat_id, hash_name, hash_value) VALUES (?, ?, ?, ?)",
+        duckdb::params![file_id, stat_id, hash_type, value],
+    )
+    .map_err(|e| DbError::set_hash(file_id, hash_type, e))?;
+
     Ok(())
 }
 
+/// Store a perceptual hash (phash, dhash, whash) as text representation of 64-bit integer.
 pub(crate) fn set_perceptual_hash_impl(
     conn: &Connection,
     file_id: i64,
     hash_type: &str,
     value: i64,
 ) -> Result<()> {
-    let column = match hash_type {
-        "phash" => "hash_phash",
-        "dhash" => "hash_dhash",
-        "whash" => "hash_whash",
-        _ => return Err(HashError::unknown_algorithm(hash_type)),
-    };
-    let sql = format!("UPDATE files SET {} = ? WHERE id = ?", column);
-    conn.execute(&sql, duckdb::params![value, file_id])?;
+    validate_hash_name(hash_type)?;
+    let stat_id = get_latest_stat_id(conn, file_id)?;
+
+    conn.execute(
+        "INSERT INTO file_hashes (file_id, stat_id, hash_name, hash_value) VALUES (?, ?, ?, ?)",
+        duckdb::params![file_id, stat_id, hash_type, value.to_string()],
+    )
+    .map_err(|e| DbError::set_perceptual_hash(file_id, hash_type, e))?;
+
     Ok(())
 }
 
+/// Query files that don't yet have a specific hash computed.
+/// Returns `(file_id, path)` pairs ordered by size ascending (small files first).
 pub(crate) fn get_files_needing_hash_impl(
     conn: &Connection,
     hash_type: &str,
     file_type_filter: Option<&str>,
 ) -> Result<Vec<(i64, String)>> {
-    let column = match hash_type {
-        "blake3" => "hash_blake3",
-        "content_blake3" => "hash_content_blake3",
-        "phash" => "hash_phash",
-        "dhash" => "hash_dhash",
-        "whash" => "hash_whash",
-        _ => return Err(HashError::unknown_algorithm(hash_type)),
-    };
+    validate_hash_name(hash_type)?;
 
     let sql = if let Some(ft) = file_type_filter {
         format!(
-            "SELECT id, path FROM files WHERE {} IS NULL AND is_missing = false AND file_type = '{}' ORDER BY size_bytes ASC",
-            column, ft
+            "SELECT v.id, v.path FROM v_files v
+             WHERE v.is_missing = false AND v.file_type = '{ft}'
+               AND NOT EXISTS (
+                   SELECT 1 FROM file_hashes h
+                   WHERE h.file_id = v.id AND h.hash_name = '{ht}'
+               )
+             ORDER BY v.size_bytes ASC",
+            ft = ft,
+            ht = hash_type
         )
     } else {
         format!(
-            "SELECT id, path FROM files WHERE {} IS NULL AND is_missing = false ORDER BY size_bytes ASC",
-            column
+            "SELECT v.id, v.path FROM v_files v
+             WHERE v.is_missing = false
+               AND NOT EXISTS (
+                   SELECT 1 FROM file_hashes h
+                   WHERE h.file_id = v.id AND h.hash_name = '{ht}'
+               )
+             ORDER BY v.size_bytes ASC",
+            ht = hash_type
         )
     };
 
-    let mut stmt = conn.prepare(&sql)?;
-    let rows = stmt.query_map([], |row| {
-        Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-    })?;
+    let mut stmt = conn
+        .prepare(&sql)
+        .map_err(|e| DbError::get_files_needing_hash(hash_type, e))?;
+
+    let rows = stmt
+        .query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })
+        .map_err(|e| DbError::get_files_needing_hash(hash_type, e))?;
 
     let mut results = Vec::new();
     for row in rows {
-        results.push(row?);
+        results.push(row.map_err(|e| DbError::get_files_needing_hash(hash_type, e))?);
     }
     Ok(results)
 }

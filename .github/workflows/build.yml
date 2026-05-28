@@ -148,28 +148,26 @@ jobs:
         shell: bash
         run: cp target/${{ matrix.target }}/release/memento memento-${{ matrix.target }}
 
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p pkg
+          cp target/${{ matrix.target }}/release/memento pkg/
+
       - name: Package (Windows)
         if: runner.os == 'Windows'
-        shell: pwsh
+        shell: bash
         run: |
-          New-Item -ItemType Directory -Force -Path pkg
-          Copy-Item target/${{ matrix.target }}/release/memento.exe pkg/
-          Copy-Item libduckdb/duckdb.dll pkg/
-          Compress-Archive -Path pkg/* -DestinationPath memento-${{ matrix.target }}.zip
+          mkdir -p pkg
+          cp target/${{ matrix.target }}/release/memento.exe pkg/
+          cp libduckdb/duckdb.dll pkg/
 
-      - name: Upload artifact (Unix)
-        if: runner.os != 'Windows'
+      - name: Upload artifact
         uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact }}
-          path: memento-${{ matrix.target }}
-
-      - name: Upload artifact (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v5
-        with:
-          name: ${{ matrix.artifact }}
-          path: memento-${{ matrix.target }}.zip
+          path: pkg/
 
   release:
     name: Release
@@ -182,10 +180,26 @@ jobs:
       - uses: actions/download-artifact@v5
         with:
           path: artifacts
-          merge-multiple: true
+
+      - name: Package release assets
+        run: |
+          mkdir -p release
+          # Unix: single binary, rename with platform suffix
+          for dir in memento-macos-x64 memento-macos-arm64 memento-linux-x64; do
+            if [ -d "artifacts/$dir" ]; then
+              cp artifacts/$dir/memento release/$dir
+              chmod +x release/$dir
+            fi
+          done
+          # Windows: zip exe + dll together
+          if [ -d "artifacts/memento-windows-x64" ]; then
+            cd artifacts/memento-windows-x64
+            zip ../../release/memento-windows-x64.zip *
+            cd ../..
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
-          files: artifacts/*
+          files: release/*

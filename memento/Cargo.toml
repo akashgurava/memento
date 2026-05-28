@@ -15,14 +15,21 @@ required-features = ["cli"]
 [features]
 default = ["bundled"]
 bundled = ["duckdb/bundled"]
-cli = ["dep:clap", "dep:tracing-subscriber"]
+cli = ["dep:clap", "dep:tracing-subscriber", "dep:ctrlc"]
 
 [dependencies]
 # Database
 duckdb = { version = "1" }
 
 # Image processing
-image = { version = "0.23", default-features = false, features = ["jpeg", "png", "tiff", "webp", "gif", "bmp"] }
+image = { version = "0.23", default-features = false, features = [
+    "jpeg",
+    "png",
+    "tiff",
+    "webp",
+    "gif",
+    "bmp",
+] }
 img_hash = "3"
 
 # Hashing
@@ -38,8 +45,8 @@ ignore = "0.4"
 rayon = "1"
 
 # Config
-toml = "0.8"
-dirs = "5"
+serde_yml = "0.0.13"
+dirs = "6"
 
 # Serialization
 serde = { workspace = true }
@@ -58,7 +65,10 @@ anyhow = "1"
 
 # CLI only (feature-gated)
 clap = { version = "4", features = ["derive"], optional = true }
-tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+], optional = true }
+ctrlc = { version = "3", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

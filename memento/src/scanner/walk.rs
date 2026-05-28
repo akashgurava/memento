@@ -1,9 +1,19 @@
-use std::path::Path;
+//! Filesystem walking and file classification utilities.
+//!
+//! Provides a directory walker built on the [`ignore`] crate (respects .gitignore
+//! patterns but configured to include hidden files) and helpers for classifying
+//! files by extension and normalizing paths cross-platform.
+
+use std::path::{Path, PathBuf};
 
 use ignore::WalkBuilder;
 
 use crate::config::AppConfig;
 
+/// A single file discovered during a directory walk.
+///
+/// Contains the metadata needed for change detection (size + mtime) without
+/// reading file contents.
 #[derive(Debug, Clone)]
 pub struct WalkEntry {
     pub path: String,
@@ -33,6 +43,20 @@ pub fn normalize_path(path: &Path) -> String {
         s.replace('\\', "/")
     } else {
         s.to_string()
+    }
+}
+
+/// Expand a leading `~` to the user's home directory.
+/// Returns the path unchanged if it doesn't start with `~`.
+pub fn expand_tilde(path: &str) -> PathBuf {
+    if path == "~" {
+        dirs::home_dir().unwrap_or_else(|| PathBuf::from(path))
+    } else if let Some(rest) = path.strip_prefix("~/") {
+        dirs::home_dir()
+            .map(|home| home.join(rest))
+            .unwrap_or_else(|| PathBuf::from(path))
+    } else {
+        PathBuf::from(path)
     }
 }
 

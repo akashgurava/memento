@@ -5,6 +5,14 @@ use crate::error::Result;
 
 use super::schema::AppConfig;
 
+/// Header comment written at the top of generated config files.
+const CONFIG_HEADER: &str = "\
+# Memento configuration
+#
+# Paths: On Windows, use forward slashes (D:/Photos) or single-quoted paths.
+# Double-quoted strings treat backslashes as escape characters.
+";
+
 /// Trait for loading and saving application configuration.
 pub trait ConfigStore {
     /// Load configuration, creating defaults if missing.
@@ -32,6 +40,7 @@ impl FsConfigStore {
 impl ConfigStore for FsConfigStore {
     fn load(&self) -> Result<AppConfig> {
         if !self.path.exists() {
+            tracing::info!("LOAD_CONFIG: CREATED_DEFAULTS. path: {}", self.path.display());
             if let Some(parent) = self.path.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -40,8 +49,9 @@ impl ConfigStore for FsConfigStore {
             return Ok(config);
         }
 
+        tracing::debug!("LOAD_CONFIG: START. path: {}", self.path.display());
         let content = fs::read_to_string(&self.path)?;
-        let config: AppConfig = toml::from_str(&content)?;
+        let config: AppConfig = serde_yml::from_str(&content)?;
         Ok(config)
     }
 
@@ -49,7 +59,8 @@ impl ConfigStore for FsConfigStore {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let content = toml::to_string_pretty(config)?;
+        let yaml = serde_yml::to_string(config)?;
+        let content = format!("{}{}", CONFIG_HEADER, yaml);
         fs::write(&self.path, content)?;
         Ok(())
     }

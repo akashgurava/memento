@@ -14,27 +14,29 @@ Photo library manager and deduplication engine. Scans, indexes, hashes, and iden
   - On macOS/Linux the `bundled` feature (default) statically links DuckDB — single binary, no runtime deps
   - Building from source on Windows: set `DUCKDB_LIB_DIR` and `DUCKDB_INCLUDE_DIR` to the extracted [DuckDB release](https://github.com/duckdb/duckdb/releases) directory
 
+> **Windows SmartScreen**: The release binary is not code-signed. Windows may block it on first run. Right-click the downloaded zip → Properties → check "Unblock" before extracting. Or click "More info" → "Run anyway" on the SmartScreen prompt.
+
 Without ffprobe, video files will still be scanned and hashed, but video-specific metadata (duration, codec, resolution) will not be extracted.
 
 ## CLI Usage
 
 ### Configuration
 
-Copy `config.sample.toml` to `config.toml` in your working directory and edit the `roots` field. See `config.sample.toml` for all available options.
+Run any command and a `config.yaml` will be created automatically if it doesn't exist. Edit the `roots` field to point at your photo directories.
 
 ```bash
 # Set roots (macOS/Linux)
 memento config set-roots ~/Photos /Volumes/Backup/Photos
 
-# Set roots (Windows — use forward slashes, quote paths with spaces)
-memento config set-roots "C:/Users/You/Pictures" "D:/My Photos/Backup"
+# Set roots (Windows — backslashes are auto-converted to forward slashes)
+memento config set-roots "D:\mig" "C:\Users\You\Pictures"
 
 # View current config
 memento config show
 ```
 
 Options:
-- `--config path/to/config.toml` — use a specific config file (default: `./config.toml`)
+- `--config path/to/config.yaml` — use a specific config file (default: `./config.yaml`)
 - `--db path/to/memento.duckdb` — override database path (default resolution: `--db` flag > `db_path` in config > `./memento.duckdb`)
 
 ### Scanning
@@ -55,9 +57,8 @@ memento dupes <hash_type>       # List duplicate groups (blake3|content_blake3)
 ### Full pipeline example
 
 ```bash
-cp config.sample.toml config.toml
 memento config set-roots ~/Photos /Volumes/Backup/Photos    # macOS/Linux
-# memento config set-roots C:/Users/You/Pictures            # Windows
+# memento config set-roots "D:\Photos" "E:\Backup"          # Windows
 memento scan stats
 memento scan metadata
 memento scan hash blake3
@@ -90,7 +91,7 @@ Perceptual hashes are compared via Hamming distance (XOR + popcount). Distance 0
 | `hashing` | BLAKE3 (full-file + content-only), pHash, dHash, wHash |
 | `metadata` | EXIF/XMP/IPTC extraction (images), ffprobe parsing (videos) |
 | `db` | DuckDB schema, migrations, typed query helpers |
-| `config` | TOML-based configuration with platform-aware paths |
+| `config` | YAML-based configuration with platform-aware paths |
 | `error` | Structured errors — domain enums with ErrorContext/ErrorInfo pattern |
 
 ```rust
@@ -101,8 +102,8 @@ use memento::scanner::{level1, level2, level3};
 use memento::scanner::progress::NoopReporter;
 use memento::tokio_util::sync::CancellationToken;
 
-let config = config::load_from(Path::new("config.toml")).unwrap();
-let db_path = config::db_path_relative_to(Path::new("config.toml"));
+let config = config::load_from(Path::new("config.yaml")).unwrap();
+let db_path = config::db_path_relative_to(Path::new("config.yaml"));
 let db = Db::open(&db_path).unwrap();
 let cancel = CancellationToken::new();
 
