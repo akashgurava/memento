@@ -8,7 +8,7 @@ Memento is a Tauri v2 desktop app for cleaning up and consolidating a large phot
 
 **Key decisions:**
 - Database: DuckDB (bundled, single file at `~/Library/Application Support/xyz.225274.memento/memento.duckdb`)
-- Config: TOML file (same directory, `config.toml`) — scan roots specified here, not via UI picker
+- Config: YAML file (same directory, `config.yaml`) — scan roots specified here, not via UI picker
 - Hashing (images): BLAKE3 full-file, BLAKE3 content-only (pixels without metadata), pHash, dHash, wHash
 - Hashing (videos): BLAKE3 full-file only (metadata + size sufficient for video dedup)
 - Metadata: Store everything available (EAV table for raw tags — EXIF, XMP, IPTC, video)
@@ -61,7 +61,7 @@ lib.rs              — pub mod declarations, re-exports (duckdb, tokio_util)
 main.rs             — CLI entry point (behind "cli" feature, requires clap + tracing-subscriber)
 error.rs            — Structured errors: ErrorContext, ErrorInfo trait, impl_err_from_info! macro, domain enums
 config/
-  mod.rs            — load/save TOML config, platform path resolution
+  mod.rs            — load/save YAML config, platform path resolution
   schema.rs         — AppConfig serde structs with defaults
 db/
   mod.rs            — init_db(), Connection setup

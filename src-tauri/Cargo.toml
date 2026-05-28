@@ -1,0 +1,24 @@
+[package]
+name = "memento-tauri"
+version = "0.1.0"
+description = "Memento desktop app (Tauri shell)"
+authors = ["you"]
+edition = "2021"
+
+[lib]
+name = "memento_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+memento = { path = "../memento" }
+tauri = { version = "2", features = ["devtools"] }
+tauri-plugin-opener = "2"
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
