@@ -10,6 +10,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  DUCKDB_VERSION: "v1.5.3"
 
 jobs:
   check:
@@ -70,17 +71,17 @@ jobs:
       # Windows: download and extract pre-built DuckDB, point build at it
       - name: Download DuckDB (Windows)
         if: runner.os == 'Windows'
-        uses: robinraju/release-downloader@v1.12
-        with:
-          repository: "duckdb/duckdb"
-          tag: "v1.5.3"
-          fileName: ${{ matrix.duckdb_zip }}
-          out-file-path: .
+        shell: pwsh
+        run: |
+          gh release download ${{ env.DUCKDB_VERSION }} --repo duckdb/duckdb --pattern ${{ matrix.duckdb_zip }}
+          Expand-Archive -Path ${{ matrix.duckdb_zip }} -DestinationPath ${{ github.workspace }}/libduckdb
+        env:
+          GH_TOKEN: ${{ github.token }}
 
-      - name: Extract DuckDB (Windows)
+      - name: Add DuckDB to PATH (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Expand-Archive -Path ${{ matrix.duckdb_zip }} -DestinationPath libduckdb
+        run: echo "${{ github.workspace }}/libduckdb" | Out-File -Append -FilePath $env:GITHUB_PATH
 
       - name: Test (Windows)
         if: runner.os == 'Windows'
@@ -88,7 +89,6 @@ jobs:
         env:
           DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
           DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
-          PATH: ${{ github.workspace }}/libduckdb;${{ env.PATH }}
 
   build:
     name: Build (${{ matrix.artifact }})
@@ -133,17 +133,12 @@ jobs:
       # Windows: use pre-built DuckDB to avoid OOM from C++ unity build
       - name: Download DuckDB (Windows)
         if: runner.os == 'Windows'
-        uses: robinraju/release-downloader@v1.12
-        with:
-          repository: "duckdb/duckdb"
-          tag: "v1.5.3"
-          fileName: ${{ matrix.duckdb_zip }}
-          out-file-path: .
-
-      - name: Extract DuckDB (Windows)
-        if: runner.os == 'Windows'
         shell: pwsh
-        run: Expand-Archive -Path ${{ matrix.duckdb_zip }} -DestinationPath libduckdb
+        run: |
+          gh release download ${{ env.DUCKDB_VERSION }} --repo duckdb/duckdb --pattern ${{ matrix.duckdb_zip }}
+          Expand-Archive -Path ${{ matrix.duckdb_zip }} -DestinationPath ${{ github.workspace }}/libduckdb
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       - name: Build release (Windows)
         if: runner.os == 'Windows'
