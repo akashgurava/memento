@@ -1,14 +1,14 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use duckdb::Connection;
 use rayon::prelude::*;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::AppConfig;
-use crate::db::queries;
+use crate::db::hashes::invalidate_hashes_impl;
+use crate::db::metadata_repo::insert_metadata_batch_impl;
+use crate::db::{files::upsert_file_impl, Db, FileRepository};
 use crate::error::{Result, ScanError};
 use crate::metadata;
 use crate::scanner::progress::{ProgressReporter, ScanProgress};
@@ -35,7 +35,7 @@ impl FileChange {
 /// Run Level 2 incremental metadata scan
 pub fn run_metadata_scan(
     config: &AppConfig,
-    db: &Arc<Mutex<Connection>>,
+    db: &Db,
     scan_run_id: i64,
     reporter: &dyn ProgressReporter,
     cancel_token: &CancellationToken,
@@ -72,51 +72,28 @@ pub fn run_metadata_scan(
 
         // Phase B: Compare against DB
         let changes = {
-            let conn = db.lock().map_err(ScanError::lock_failed)?;
-
-            let mut stmt = conn.prepare(
-                "SELECT id, path, size_bytes, mtime_secs, mtime_nanos FROM files WHERE root_dir = ? AND is_missing = false"
-            )?;
-            let db_rows: Vec<(i64, String, i64, i64, i32)> = stmt
-                .query_map([root], |row| {
-                    Ok((
-                        row.get(0)?,
-                        row.get(1)?,
-                        row.get(2)?,
-                        row.get(3)?,
-                        row.get(4)?,
-                    ))
-                })?
-                .filter_map(|r| r.ok())
-                .collect();
+            let db_records = db.get_active_files_for_root(root)?;
 
             let mut changes: Vec<FileChange> = Vec::new();
             let mut seen_paths: HashMap<&str, bool> = HashMap::new();
 
-            for (_id, path, size, mtime_s, mtime_n) in &db_rows {
-                if let Some(entry) = walk_map.get(path.as_str()) {
-                    seen_paths.insert(path.as_str(), true);
-                    if entry.size_bytes as i64 != *size
-                        || entry.mtime_secs != *mtime_s
-                        || entry.mtime_nanos != *mtime_n
+            for record in &db_records {
+                if let Some(entry) = walk_map.get(record.path.as_str()) {
+                    seen_paths.insert(record.path.as_str(), true);
+                    if entry.size_bytes as i64 != record.size_bytes
+                        || entry.mtime_secs != record.mtime_secs
+                        || entry.mtime_nanos != record.mtime_nanos
                     {
                         changes.push(FileChange::Modified((*entry).clone()));
                     }
                 } else {
-                    queries::mark_missing(&conn, path)?;
+                    db.mark_missing(&record.path)?;
                 }
             }
 
             for entry in &walk_entries {
-                if !seen_paths.contains_key(entry.path.as_str()) {
-                    let exists: bool = conn
-                        .prepare("SELECT COUNT(*) > 0 FROM files WHERE path = ?")?
-                        .query_row([&entry.path], |row| row.get(0))
-                        .unwrap_or(false);
-
-                    if !exists {
-                        changes.push(FileChange::New(entry.clone()));
-                    }
+                if !seen_paths.contains_key(entry.path.as_str()) && !db.file_exists(&entry.path)? {
+                    changes.push(FileChange::New(entry.clone()));
                 }
             }
 
@@ -159,12 +136,12 @@ pub fn run_metadata_scan(
             });
 
             // Serial: write results to DB (single-writer constraint)
-            let conn = db.lock().map_err(ScanError::lock_failed)?;
+            let conn = db.conn()?;
 
             for (change, filename, extension, file_type, metadata_entries) in &extracted {
                 let entry = change.entry();
 
-                let file_id = queries::upsert_file(
+                let file_id = upsert_file_impl(
                     &conn,
                     &entry.path,
                     root,
@@ -177,11 +154,11 @@ pub fn run_metadata_scan(
                 )?;
 
                 if change.is_modified() {
-                    queries::invalidate_hashes(&conn, file_id)?;
+                    invalidate_hashes_impl(&conn, file_id)?;
                 }
 
                 if !metadata_entries.is_empty() {
-                    queries::insert_metadata_batch(&conn, file_id, metadata_entries)?;
+                    insert_metadata_batch_impl(&conn, file_id, metadata_entries)?;
                 }
 
                 conn.execute(

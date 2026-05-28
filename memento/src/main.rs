@@ -1,11 +1,10 @@
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
 
 use clap::{Parser, Subcommand};
 use tokio_util::sync::CancellationToken;
 
 use memento::config::{self, AppConfig};
-use memento::db;
+use memento::db::Db;
 use memento::scanner::progress::{ProgressReporter, ScanProgress};
 use memento::scanner::{level1, level2, level3};
 
@@ -122,9 +121,9 @@ async fn main() {
 
     match cli.command {
         Commands::Config { action } => handle_config(action, app_config, &config_path),
-        Commands::Stats => handle_stats(app_config, &db_path),
+        Commands::Stats => handle_stats(&db_path),
         Commands::Scan { action } => handle_scan(action, app_config, &db_path),
-        Commands::Dupes { hash_type } => handle_dupes(app_config, &db_path, &hash_type),
+        Commands::Dupes { hash_type } => handle_dupes(&db_path, &hash_type),
     }
 }
 
@@ -146,7 +145,7 @@ fn handle_config(action: ConfigAction, config: AppConfig, config_path: &Path) {
     }
 }
 
-fn handle_stats(config: AppConfig, db_path: &Path) {
+fn handle_stats(db_path: &Path) {
     if !db_path.exists() {
         println!(
             "No database found at {}. Run a scan first.",
@@ -155,8 +154,9 @@ fn handle_stats(config: AppConfig, db_path: &Path) {
         return;
     }
 
-    let conn = db::init_db(db_path).unwrap_or_else(|e| {
-        eprintln!("Failed to open database: {}", e);
+    let db = open_db(db_path);
+    let conn = db.conn().unwrap_or_else(|e| {
+        eprintln!("Failed to lock database: {}", e);
         std::process::exit(1);
     });
 
@@ -189,20 +189,14 @@ fn handle_stats(config: AppConfig, db_path: &Path) {
     println!("  Images:      {}", images);
     println!("  Videos:      {}", videos);
     println!("  Other:       {}", total - images - videos);
-
-    let _ = config;
 }
 
 fn handle_scan(action: ScanAction, config: AppConfig, db_path: &Path) {
     if let Some(parent) = db_path.parent() {
         std::fs::create_dir_all(parent).ok();
     }
-    let conn = db::init_db(db_path).unwrap_or_else(|e| {
-        eprintln!("Failed to initialize database: {}", e);
-        std::process::exit(1);
-    });
 
-    let db = Arc::new(Mutex::new(conn));
+    let db = open_db(db_path);
     let reporter = CliProgressReporter;
     let cancel_token = CancellationToken::new();
 
@@ -253,7 +247,7 @@ fn handle_scan(action: ScanAction, config: AppConfig, db_path: &Path) {
     }
 }
 
-fn handle_dupes(config: AppConfig, db_path: &Path, hash_type: &str) {
+fn handle_dupes(db_path: &Path, hash_type: &str) {
     let column = match hash_type {
         "blake3" => "hash_blake3",
         "content_blake3" => "hash_content_blake3",
@@ -266,8 +260,9 @@ fn handle_dupes(config: AppConfig, db_path: &Path, hash_type: &str) {
         }
     };
 
-    let conn = db::init_db(db_path).unwrap_or_else(|e| {
-        eprintln!("Failed to open database: {}", e);
+    let db = open_db(db_path);
+    let conn = db.conn().unwrap_or_else(|e| {
+        eprintln!("Failed to lock database: {}", e);
         std::process::exit(1);
     });
 
@@ -317,6 +312,11 @@ fn handle_dupes(config: AppConfig, db_path: &Path, hash_type: &str) {
             (*size as f64 - (*size as f64 / *count as f64)) / 1_048_576.0
         );
     }
+}
 
-    let _ = config;
+fn open_db(path: &Path) -> Db {
+    Db::open(path).unwrap_or_else(|e| {
+        eprintln!("Failed to open database: {}", e);
+        std::process::exit(1);
+    })
 }

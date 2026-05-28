@@ -124,6 +124,9 @@ pub enum DbError {
         operation: &'static str,
         error: String,
     },
+    LockFailed {
+        error: String,
+    },
 }
 
 impl DbError {
@@ -157,6 +160,13 @@ impl DbError {
             error: error.to_string(),
         })
     }
+
+    /// Failed to acquire database mutex lock.
+    pub fn lock_failed(error: impl std::fmt::Display) -> MementoError {
+        MementoError::Db(Self::LockFailed {
+            error: error.to_string(),
+        })
+    }
 }
 
 impl ErrorInfo for DbError {
@@ -166,6 +176,7 @@ impl ErrorInfo for DbError {
             Self::Migration { .. } => "DB_MIGRATION_FAILED",
             Self::Query { .. } => "DB_QUERY_FAILED",
             Self::Write { .. } => "DB_WRITE_FAILED",
+            Self::LockFailed { .. } => "DB_LOCK_FAILED",
         }
     }
 
@@ -179,6 +190,7 @@ impl ErrorInfo for DbError {
             Self::Write { operation, error } => {
                 ErrorContext::new(Some(error), "operation", operation)
             }
+            Self::LockFailed { error } => ErrorContext::error_only(error),
         }
     }
 }

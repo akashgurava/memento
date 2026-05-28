@@ -1,12 +1,11 @@
-use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use duckdb::Connection;
 use rayon::prelude::*;
 use tokio_util::sync::CancellationToken;
 
 use crate::config::AppConfig;
-use crate::db::queries;
+use crate::db::hashes::{set_hash_impl, set_perceptual_hash_impl};
+use crate::db::{Db, HashRepository};
 use crate::error::{Result, ScanError};
 use crate::hashing::{self, HashAlgo};
 use crate::scanner::progress::{ProgressReporter, ScanProgress};
@@ -14,7 +13,7 @@ use crate::scanner::progress::{ProgressReporter, ScanProgress};
 /// Run Level 3 hash scan for a specific algorithm
 pub fn run_hash_scan(
     config: &AppConfig,
-    db: &Arc<Mutex<Connection>>,
+    db: &Db,
     scan_run_id: i64,
     hash_type: &str,
     reporter: &dyn ProgressReporter,
@@ -30,13 +29,10 @@ pub fn run_hash_scan(
         HashAlgo::Blake3Full => None,
     };
 
-    let files_to_hash = {
-        let conn = db.lock().map_err(ScanError::lock_failed)?;
-        queries::get_files_needing_hash(&conn, hash_type, file_type_filter)?
-    };
+    let files_to_hash = db.get_files_needing_hash(hash_type, file_type_filter)?;
 
     let total = files_to_hash.len() as i64;
-    let processed = Arc::new(std::sync::atomic::AtomicI64::new(0));
+    let processed = std::sync::atomic::AtomicI64::new(0);
     let batch_size = config.scan.level3.batch_size;
 
     let parallelism = if config.scan.level3.parallelism == 0 {
@@ -66,15 +62,15 @@ pub fn run_hash_scan(
                     .collect()
             });
 
-        let conn = db.lock().map_err(ScanError::lock_failed)?;
+        let conn = db.conn()?;
         for (file_id, result) in &results {
             match result {
                 Ok(hash_result) => match hash_result {
                     hashing::HashResult::Hex(hex) => {
-                        queries::set_hash(&conn, *file_id, hash_type, hex)?;
+                        set_hash_impl(&conn, *file_id, hash_type, hex)?;
                     }
                     hashing::HashResult::Perceptual(value) => {
-                        queries::set_perceptual_hash(&conn, *file_id, hash_type, *value)?;
+                        set_perceptual_hash_impl(&conn, *file_id, hash_type, *value)?;
                     }
                 },
                 Err(e) => {
