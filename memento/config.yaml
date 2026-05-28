@@ -13,7 +13,7 @@ scan:
   # Windows paths work unquoted: D:\Photos
   # Or use forward slashes: D:/Photos
   roots:
-    - "/Users/a81059860/Pictures"
+    - "~/Pictures"
     # - /Volumes/External/Backup
     # - D:\My Photos\Backup
 
