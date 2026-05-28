@@ -1,0 +1,63 @@
+[package]
+name = "memento"
+version = "0.0.1"
+description = "Photo library manager and deduplication engine"
+edition = "2021"
+
+[lib]
+name = "memento"
+
+[[bin]]
+name = "memento"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = []
+cli = ["dep:clap", "dep:tracing-subscriber"]
+
+[dependencies]
+# Database
+duckdb = { version = "1", features = ["bundled"] }
+
+# Image processing
+image = { version = "0.23", default-features = false, features = ["jpeg", "png", "tiff", "webp", "gif", "bmp"] }
+img_hash = "3"
+
+# Hashing
+blake3 = "1"
+
+# Metadata
+kamadak-exif = "0.5"
+
+# Filesystem
+ignore = "0.4"
+
+# Parallelism
+rayon = "1"
+
+# Config
+toml = "0.8"
+dirs = "5"
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Async
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+anyhow = "1"
+
+# CLI only (feature-gated)
+clap = { version = "4", features = ["derive"], optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
+
+[dev-dependencies]
+tempfile = "3"
