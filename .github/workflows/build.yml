@@ -24,8 +24,6 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: memento
       - name: Format check
         run: cargo fmt -p memento -- --check
       - name: Clippy
@@ -58,7 +56,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: memento
           key: ${{ matrix.target }}
 
       # Linux/macOS: let libduckdb-sys download the pre-built library
@@ -122,7 +119,6 @@ jobs:
           targets: ${{ matrix.target }}
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: memento
           key: ${{ matrix.target }}-release
 
       # Unix: bundled (compiles DuckDB from source — fast on Linux/macOS)

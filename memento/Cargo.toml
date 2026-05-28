@@ -13,12 +13,13 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [features]
-default = []
+default = ["bundled"]
+bundled = ["duckdb/bundled"]
 cli = ["dep:clap", "dep:tracing-subscriber"]
 
 [dependencies]
 # Database
-duckdb = { version = "1", features = ["bundled"] }
+duckdb = { version = "1" }
 
 # Image processing
 image = { version = "0.23", default-features = false, features = ["jpeg", "png", "tiff", "webp", "gif", "bmp"] }
