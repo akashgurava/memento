@@ -143,15 +143,33 @@ jobs:
           DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
           DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
 
-      - name: Rename binary
+      - name: Package (Unix)
+        if: runner.os != 'Windows'
         shell: bash
-        run: cp target/${{ matrix.target }}/release/memento${{ matrix.ext }} memento-${{ matrix.target }}${{ matrix.ext }}
+        run: cp target/${{ matrix.target }}/release/memento memento-${{ matrix.target }}
 
-      - name: Upload artifact
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path pkg
+          Copy-Item target/${{ matrix.target }}/release/memento.exe pkg/
+          Copy-Item libduckdb/duckdb.dll pkg/
+          Compress-Archive -Path pkg/* -DestinationPath memento-${{ matrix.target }}.zip
+
+      - name: Upload artifact (Unix)
+        if: runner.os != 'Windows'
         uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact }}
-          path: memento-${{ matrix.target }}${{ matrix.ext }}
+          path: memento-${{ matrix.target }}
+
+      - name: Upload artifact (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v5
+        with:
+          name: ${{ matrix.artifact }}
+          path: memento-${{ matrix.target }}.zip
 
   release:
     name: Release
