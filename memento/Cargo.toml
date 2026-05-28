@@ -13,62 +13,71 @@ path = "src/main.rs"
 required-features = ["cli"]
 
 [features]
-default = ["bundled"]
-bundled = ["duckdb/bundled"]
-cli = ["dep:clap", "dep:tracing-subscriber", "dep:ctrlc"]
+default = ["cli"]
+# bundled = ["duckdb/bundled"]
+cli = ["dep:clap"]
 
 [dependencies]
-# Database
-duckdb = { version = "1" }
+# Base
+serde = { version = "1", features = ["derive"] }
+figment = { version = "0.10", features = ["yaml"] }
 
-# Image processing
-image = { version = "0.23", default-features = false, features = [
-    "jpeg",
-    "png",
-    "tiff",
-    "webp",
-    "gif",
-    "bmp",
-] }
-img_hash = "3"
-
-# Hashing
-blake3 = "1"
-
-# Metadata
-kamadak-exif = "0.5"
-
-# Filesystem
-ignore = "0.4"
-
-# Parallelism
-rayon = "1"
-
-# Config
-serde_yml = "0.0.13"
-dirs = "6"
-
-# Serialization
-serde = { workspace = true }
-serde_json = { workspace = true }
-
-# Async
-tokio = { workspace = true }
-tokio-util = { workspace = true }
-
-# Logging
-tracing = { workspace = true }
-
-# Utilities
-chrono = { version = "0.4", features = ["serde"] }
-anyhow = "1"
-
-# CLI only (feature-gated)
+# CLI
 clap = { version = "4", features = ["derive"], optional = true }
-tracing-subscriber = { version = "0.3", features = [
-    "env-filter",
-], optional = true }
-ctrlc = { version = "3", optional = true }
+# tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# ctrlc = { version = "3" }
+
+# # Database
+# duckdb = { version = "1" }
+
+# # Image processing
+# image = { version = "0.23", default-features = false, features = [
+#     "jpeg",
+#     "png",
+#     "tiff",
+#     "webp",
+#     "gif",
+#     "bmp",
+# ] }
+# img_hash = "3"
+
+# # Hashing
+# blake3 = "1"
+
+# # Metadata
+# kamadak-exif = "0.5"
+
+# # Filesystem
+# ignore = "0.4"
+
+# # Parallelism
+# rayon = "1"
+
+# # Config
+# figment = { version = "0.10", features = ["yaml"] }
+# dirs = "6"
+
+# # Serialization
+# serde = { workspace = true }
+# serde_json = { workspace = true }
+
+# # Async
+# tokio = { workspace = true }
+# tokio-util = { workspace = true }
+
+# # Logging
+# tracing = { workspace = true }
+
+# # Utilities
+# chrono = { version = "0.4", features = ["serde"] }
+# anyhow = "1"
+
+# # CLI only (feature-gated)
+# clap = { version = "4", features = ["derive"], optional = true }
+# tracing-subscriber = { version = "0.3", features = [
+#     "env-filter",
+# ], optional = true }
+# ctrlc = { version = "3", optional = true }
 
 [dev-dependencies]
 tempfile = "3"

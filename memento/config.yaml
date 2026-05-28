@@ -1,7 +1,4 @@
 # Memento configuration
-#
-# Paths: On Windows, use forward slashes (D:/Photos) or single-quoted paths.
-# Double-quoted strings treat backslashes as escape characters.
 
 schema_version: 1
 
@@ -55,10 +52,10 @@ scan:
     - m2ts
     - ts
 
-  level2:
+  metadata:
     batch_size: 500  # Files per batch for metadata extraction
     parallelism: 0   # 0 = use all CPU cores
 
-  level3:
+  hash:
     batch_size: 100  # Files per batch for hashing
     parallelism: 0   # 0 = use all CPU cores
