@@ -15,8 +15,10 @@ jobs:
   check:
     name: Check & Lint
     runs-on: ubuntu-latest
+    env:
+      DUCKDB_DOWNLOAD_LIB: "1"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
@@ -26,37 +28,67 @@ jobs:
       - name: Format check
         run: cargo fmt -p memento -- --check
       - name: Clippy
-        run: cargo clippy -p memento --features cli -- -D warnings
+        run: cargo clippy -p memento --no-default-features --features cli -- -D warnings
       - name: Check (lib)
-        run: cargo check -p memento
+        run: cargo check -p memento --no-default-features
       - name: Check (cli)
-        run: cargo check -p memento --features cli
+        run: cargo check -p memento --no-default-features --features cli
 
   test:
-    name: Test
+    name: Test (${{ matrix.name }})
     needs: [check]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - name: Linux
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - name: macOS
+            os: macos-latest
+            target: aarch64-apple-darwin
+          - name: Windows
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            duckdb_zip: libduckdb-windows-amd64.zip
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure pagefile (Windows)
-        if: runner.os == 'Windows'
-        uses: al-cheb/configure-pagefile-action@v1.4
-        with:
-          minimum-size: 16GB
-          maximum-size: 16GB
-          disk-root: "D:"
-
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: memento
-          key: ${{ matrix.os }}
-      - run: cargo test -p memento
+          key: ${{ matrix.target }}
+
+      # Linux/macOS: let libduckdb-sys download the pre-built library
+      - name: Test (Unix)
+        if: runner.os != 'Windows'
+        run: cargo test -p memento --no-default-features
+        env:
+          DUCKDB_DOWNLOAD_LIB: "1"
+
+      # Windows: download and extract pre-built DuckDB, point build at it
+      - name: Download DuckDB (Windows)
+        if: runner.os == 'Windows'
+        uses: robinraju/release-downloader@v1.12
+        with:
+          repository: "duckdb/duckdb"
+          tag: "v1.5.3"
+          fileName: ${{ matrix.duckdb_zip }}
+          out-file-path: .
+
+      - name: Extract DuckDB (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Expand-Archive -Path ${{ matrix.duckdb_zip }} -DestinationPath libduckdb
+
+      - name: Test (Windows)
+        if: runner.os == 'Windows'
+        run: cargo test -p memento --no-default-features
+        env:
+          DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
+          DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
+          PATH: ${{ github.workspace }}/libduckdb;${{ env.PATH }}
 
   build:
     name: Build (${{ matrix.artifact }})
@@ -70,6 +102,7 @@ jobs:
             os: windows-latest
             artifact: memento-windows-x64
             ext: .exe
+            duckdb_zip: libduckdb-windows-amd64.zip
           - target: x86_64-apple-darwin
             os: macos-13
             artifact: memento-macos-x64
@@ -83,34 +116,48 @@ jobs:
             artifact: memento-linux-x64
             ext: ""
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Configure pagefile (Windows)
-        if: runner.os == 'Windows'
-        uses: al-cheb/configure-pagefile-action@v1.4
-        with:
-          minimum-size: 16GB
-          maximum-size: 16GB
-          disk-root: "D:"
-
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
-
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: memento
-          key: ${{ matrix.target }}
+          key: ${{ matrix.target }}-release
 
-      - name: Build release
+      # Unix: bundled (compiles DuckDB from source — fast on Linux/macOS)
+      - name: Build release (Unix)
+        if: runner.os != 'Windows'
         run: cargo build -p memento --features cli --release --target ${{ matrix.target }}
+
+      # Windows: use pre-built DuckDB to avoid OOM from C++ unity build
+      - name: Download DuckDB (Windows)
+        if: runner.os == 'Windows'
+        uses: robinraju/release-downloader@v1.12
+        with:
+          repository: "duckdb/duckdb"
+          tag: "v1.5.3"
+          fileName: ${{ matrix.duckdb_zip }}
+          out-file-path: .
+
+      - name: Extract DuckDB (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Expand-Archive -Path ${{ matrix.duckdb_zip }} -DestinationPath libduckdb
+
+      - name: Build release (Windows)
+        if: runner.os == 'Windows'
+        run: cargo build -p memento --no-default-features --features cli --release --target ${{ matrix.target }}
+        env:
+          DUCKDB_LIB_DIR: ${{ github.workspace }}/libduckdb
+          DUCKDB_INCLUDE_DIR: ${{ github.workspace }}/libduckdb
 
       - name: Rename binary
         shell: bash
         run: cp target/${{ matrix.target }}/release/memento${{ matrix.ext }} memento-${{ matrix.target }}${{ matrix.ext }}
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact }}
           path: memento-${{ matrix.target }}${{ matrix.ext }}
@@ -123,7 +170,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v5
         with:
           path: artifacts
           merge-multiple: true
