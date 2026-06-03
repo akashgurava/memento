@@ -1,10 +1,90 @@
-[workspace]
-members = ["memento"]
-resolver = "2"
+[package]
+name = "memento"
+version = "0.0.1"
+description = "Photo library manager and deduplication engine"
+edition = "2021"
 
-[workspace.dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "sync", "fs", "macros"] }
-tokio-util = { version = "0.7", features = ["rt"] }
+[lib]
+name = "memento"
+
+[[bin]]
+name = "memento"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+# bundled = ["duckdb/bundled"]
+cli = ["dep:clap", "dep:ctrlc", "dep:indicatif", "dep:tracing-subscriber"]
+
+[dependencies]
+# Base
 tracing = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+crossbeam = "0.8"
+
+# Filesystem
+ignore = "0.4"
+shellexpand = "3.1.2"
+
+# DB
+duckdb = { version = "1", features = ["bundled"] }
+
+# CLI
+clap = { version = "4", features = ["derive"], optional = true }
+ctrlc = { version = "3", optional = true }
+indicatif = { version = "0.18", optional = true }
+tracing-subscriber = { version = "0.3", features = [
+    "env-filter",
+], optional = true }
+
+# # Database
+# duckdb = { version = "1" }
+
+# # Image processing
+# image = { version = "0.23", default-features = false, features = [
+#     "jpeg",
+#     "png",
+#     "tiff",
+#     "webp",
+#     "gif",
+#     "bmp",
+# ] }
+# img_hash = "3"
+
+# # Hashing
+# blake3 = "1"
+
+# # Metadata
+# kamadak-exif = "0.5"
+
+# # Filesystem
+# ignore = "0.4"
+
+# # Parallelism
+# rayon = "1"
+
+# # Config
+# figment = { version = "0.10", features = ["yaml"] }
+# dirs = "6"
+
+# # Serialization
+# serde = { workspace = true }
+# serde_json = { workspace = true }
+
+# # Async
+# tokio-util = { workspace = true }
+
+# # Logging
+
+# # Utilities
+# chrono = { version = "0.4", features = ["serde"] }
+# anyhow = "1"
+
+# # CLI only (feature-gated)
+# clap = { version = "4", features = ["derive"], optional = true }
+
+
+[dev-dependencies]
+tempfile = "3"

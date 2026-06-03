@@ -1,0 +1,19 @@
+{
+  "svelte.enable-ts-plugin": true,
+  "workbench.editorAssociations": {
+    "*.parquet": "duckdb.dataFileViewer",
+    "*.csv": "duckdb.dataFileViewer",
+    "*.tsv": "duckdb.dataFileViewer",
+    "*.xlsx": "duckdb.dataFileViewer"
+  },
+  "duckdb.databases": [
+    {
+      "alias": "memento",
+      "type": "file",
+      "path": "/Users/a81059860/docs/Personal/memento/memento.duckdb",
+      "readOnly": false,
+      "attached": false
+    }
+  ],
+  "duckdb.defaultDatabase": "memento"
+}
